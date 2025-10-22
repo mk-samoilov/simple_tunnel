@@ -1,172 +1,174 @@
 #!/usr/bin/env python3
 """
-CT Client - TCP tunnel client
-Connects to server and forwards traffic between local and remote ports
+Easy Tunnel Client
+A TCP tunnel client that connects to the tunnel server and forwards local traffic.
 """
 
 import argparse
 import socket
 import threading
 import sys
-import time
 from typing import Optional
 
 
-class CTClient:
-    def __init__(self, serv_ip: str, serv_port: int, local_port: int):
-        self.serv_ip = serv_ip
-        self.serv_port = serv_port
+class TunnelClient:
+    def __init__(self, remote_port: int, local_port: int):
+        self.remote_port = remote_port
         self.local_port = local_port
         self.running = False
         
-    def start_client(self):
-        """Start the client and establish persistent connection to server"""
+    def forward_data(self, source: socket.socket, destination: socket.socket):
+        """Forward data between two sockets."""
         try:
-            print(f"Client connecting to server {self.serv_ip}:{self.serv_port}")
-            print(f"Will forward traffic to local port {self.local_port}")
-            print("Press Ctrl+C to stop the client")
-            
-            self.running = True
-            
-            # Connect to server once
-            print("Attempting to connect to server...")
-            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            while True:
+                data = source.recv(4096)
+                if not data:
+                    break
+                destination.send(data)
+        except (ConnectionResetError, ConnectionAbortedError, OSError):
+            pass
+        finally:
             try:
-                server_socket.connect((self.serv_ip, self.serv_port))
-                print(f"Connected to server {self.serv_ip}:{self.serv_port}")
-            except ConnectionRefusedError:
-                print(f"Connection refused to {self.serv_ip}:{self.serv_port}")
-                print("Make sure server is running and port is correct")
-                return
-            except Exception as e:
-                print(f"Connection error: {e}")
-                return
+                source.close()
+                destination.close()
+            except:
+                pass
+    
+    def handle_local_connection(self, local_socket: socket.socket, local_address):
+        """Handle connection from local application."""
+        print(f"[INFO] Local connection from {local_address}")
+        
+        try:
+            # Connect to tunnel server
+            remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            remote_socket.connect(('127.0.0.1', self.remote_port))
             
+            # Create bidirectional forwarding
+            local_to_remote = threading.Thread(
+                target=self.forward_data,
+                args=(local_socket, remote_socket),
+                daemon=True
+            )
+            remote_to_local = threading.Thread(
+                target=self.forward_data,
+                args=(remote_socket, local_socket),
+                daemon=True
+            )
+            
+            local_to_remote.start()
+            remote_to_local.start()
+            
+            # Wait for either thread to finish
+            local_to_remote.join()
+            remote_to_local.join()
+            
+        except Exception as e:
+            print(f"[ERROR] Error handling local connection {local_address}: {e}")
+        finally:
+            try:
+                local_socket.close()
+            except:
+                pass
+            print(f"[INFO] Local connection {local_address} closed")
+    
+    def start(self):
+        """Start the tunnel client."""
+        # Create local server socket
+        try:
+            local_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            local_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            local_server.bind(('127.0.0.1', self.local_port))
+            local_server.listen(5)
+        except OSError as e:
+            print(f"[ERROR] Failed to bind to local port {self.local_port}: {e}")
+            return False
+        
+        self.running = True
+        print(f"[INFO] Tunnel client started")
+        print(f"[INFO] Local port: {self.local_port}")
+        print(f"[INFO] Remote port: {self.remote_port}")
+        print(f"[INFO] Client listening on 127.0.0.1:{self.local_port}")
+        
+        try:
             while self.running:
                 try:
-                    # Connect to local application for each user request
-                    local_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    local_socket.connect(('localhost', self.local_port))
-                    print(f"Connected to local application on port {self.local_port}")
-                    
-                    # Start bidirectional forwarding
-                    self.forward_traffic(local_socket, server_socket)
-                    
-                except socket.error as e:
+                    local_socket, local_address = local_server.accept()
+                    # Handle each local connection in a separate thread
+                    connection_thread = threading.Thread(
+                        target=self.handle_local_connection,
+                        args=(local_socket, local_address),
+                        daemon=True
+                    )
+                    connection_thread.start()
+                except OSError:
                     if self.running:
-                        print(f"Local connection error: {e}")
-                        time.sleep(1)  # Wait before retrying
+                        print("[ERROR] Error accepting local connection")
                     break
-                except KeyboardInterrupt:
-                    break
-                    
         except KeyboardInterrupt:
-            print("\nShutting down client...")
-        except Exception as e:
-            print(f"Client error: {e}")
+            print("\n[INFO] Shutting down client...")
         finally:
-            self.stop_client()
+            self.stop()
+        
+        return True
     
-    def forward_traffic(self, local_socket: socket.socket, remote_socket: socket.socket):
-        """Forward traffic between local and remote sockets"""
-        def forward_data(source: socket.socket, destination: socket.socket, direction: str):
-            try:
-                while self.running:
-                    data = source.recv(4096)
-                    if not data:
-                        break
-                    destination.send(data)
-                    print(f"Forwarded {len(data)} bytes {direction}")
-            except Exception as e:
-                print(f"Error forwarding {direction}: {e}")
-            finally:
-                try:
-                    source.close()
-                    destination.close()
-                except:
-                    pass
-        
-        # Start bidirectional forwarding threads
-        local_to_remote = threading.Thread(
-            target=forward_data,
-            args=(local_socket, remote_socket, "local->remote")
-        )
-        remote_to_local = threading.Thread(
-            target=forward_data,
-            args=(remote_socket, local_socket, "remote->local")
-        )
-        
-        local_to_remote.daemon = True
-        remote_to_local.daemon = True
-        
-        local_to_remote.start()
-        remote_to_local.start()
-        
-        # Wait for threads to complete
-        local_to_remote.join()
-        remote_to_local.join()
-        
-        print("Traffic forwarding stopped")
-    
-    def stop_client(self):
-        """Stop the client and cleanup"""
+    def stop(self):
+        """Stop the tunnel client."""
         self.running = False
-        print("Client stopped")
+        print("[INFO] Client stopped")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="CT Client - TCP tunnel client for port forwarding",
+        description="Easy Tunnel Client - TCP tunnel client for connecting to tunnel server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python client.py --serv-ip 192.168.1.100 --serv-port 8080 --local-port 3000
-  python client.py -si localhost -sp 9000 -lp 5000
+  %(prog)s --remote-port 5432 --local-port 8080
+  %(prog)s -rp 5432 -lp 3000
+
+The client will:
+1. Listen on the specified local-port for incoming connections
+2. Forward all traffic to the tunnel server on remote-port
+3. Forward responses back to the local application
         """
     )
     
     parser.add_argument(
-        '--serv-ip', '-si',
-        type=str,
-        default='localhost',
-        help='Server IP address to connect to (default: localhost)'
-    )
-    
-    parser.add_argument(
-        '--serv-port', '-sp',
+        '--remote-port', '-rp',
         type=int,
         required=True,
-        help='Server port to connect to (assigned by server)'
+        help='Port number of the tunnel server (required)'
     )
     
     parser.add_argument(
         '--local-port', '-lp',
         type=int,
         required=True,
-        help='Local port to listen on for incoming connections'
+        help='Local port to listen on for incoming connections (required)'
     )
     
     args = parser.parse_args()
     
     # Validate ports
-    if args.serv_port < 1 or args.serv_port > 65535:
-        print("Error: serv-port must be between 1 and 65535")
+    if args.remote_port < 1 or args.remote_port > 65535:
+        print("[ERROR] Remote port must be between 1 and 65535")
         sys.exit(1)
-        
+    
     if args.local_port < 1 or args.local_port > 65535:
-        print("Error: local-port must be between 1 and 65535")
+        print("[ERROR] Local port must be between 1 and 65535")
         sys.exit(1)
     
     # Create and start client
-    client = CTClient(args.serv_ip, args.serv_port, args.local_port)
+    client = TunnelClient(args.remote_port, args.local_port)
     
     try:
-        client.start_client()
+        success = client.start()
+        if not success:
+            sys.exit(1)
     except KeyboardInterrupt:
-        print("\nClient interrupted by user")
-    except Exception as e:
-        print(f"Fatal error: {e}")
-        sys.exit(1)
+        print("\n[INFO] Client interrupted by user")
+        client.stop()
+        sys.exit(0)
 
 
 if __name__ == "__main__":

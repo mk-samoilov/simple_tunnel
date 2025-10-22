@@ -12,7 +12,8 @@ from typing import Optional
 
 
 class TunnelClient:
-    def __init__(self, remote_port: int, local_port: int):
+    def __init__(self, remote_ip: str, remote_port: int, local_port: int):
+        self.remote_ip = remote_ip
         self.remote_port = remote_port
         self.local_port = local_port
         self.running = False
@@ -41,7 +42,7 @@ class TunnelClient:
         try:
             # Connect to tunnel server
             remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            remote_socket.connect(('127.0.0.1', self.remote_port))
+            remote_socket.connect((self.remote_ip, self.remote_port))
             
             # Create bidirectional forwarding
             local_to_remote = threading.Thread(
@@ -86,7 +87,7 @@ class TunnelClient:
         self.running = True
         print(f"[INFO] Tunnel client started")
         print(f"[INFO] Local port: {self.local_port}")
-        print(f"[INFO] Remote port: {self.remote_port}")
+        print(f"[INFO] Remote server: {self.remote_ip}:{self.remote_port}")
         print(f"[INFO] Client listening on 127.0.0.1:{self.local_port}")
         
         try:
@@ -123,14 +124,21 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --remote-port 5432 --local-port 8080
-  %(prog)s -rp 5432 -lp 3000
+  %(prog)s --remote-ip 192.168.1.100 --remote-port 5432 --local-port 8080
+  %(prog)s -ri 127.0.0.1 -rp 5432 -lp 3000
 
 The client will:
 1. Listen on the specified local-port for incoming connections
 2. Forward all traffic to the tunnel server on remote-port
 3. Forward responses back to the local application
         """
+    )
+    
+    parser.add_argument(
+        '--remote-ip', '-ri',
+        type=str,
+        default='127.0.0.1',
+        help='IP address of the tunnel server (default: 127.0.0.1)'
     )
     
     parser.add_argument(
@@ -159,7 +167,7 @@ The client will:
         sys.exit(1)
     
     # Create and start client
-    client = TunnelClient(args.remote_port, args.local_port)
+    client = TunnelClient(args.remote_ip, args.remote_port, args.local_port)
     
     try:
         success = client.start()

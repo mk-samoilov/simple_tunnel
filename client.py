@@ -29,9 +29,18 @@ class CTClient:
             self.running = True
             
             # Connect to server once
+            print("Attempting to connect to server...")
             server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server_socket.connect((self.serv_ip, self.serv_port))
-            print(f"Connected to server {self.serv_ip}:{self.serv_port}")
+            try:
+                server_socket.connect((self.serv_ip, self.serv_port))
+                print(f"Connected to server {self.serv_ip}:{self.serv_port}")
+            except ConnectionRefusedError:
+                print(f"Connection refused to {self.serv_ip}:{self.serv_port}")
+                print("Make sure server is running and port is correct")
+                return
+            except Exception as e:
+                print(f"Connection error: {e}")
+                return
             
             while self.running:
                 try:

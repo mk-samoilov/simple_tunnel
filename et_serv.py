@@ -42,7 +42,7 @@ class ETServer:
     def start_server(self):
         """Start the TCP server on share_port"""
         if not self.check_port_availability(self.share_port):
-            print(f"Error: Port {self.share_port} is already in use")Ъ
+            print(f"Error: Port {self.share_port} is already in use")
             sys.exit(1)
         
         try:
@@ -57,6 +57,7 @@ class ETServer:
             
             print(f"Server started on port {self.share_port}")
             print(f"Client should connect to port: {self.assigned_client_port}")
+            print(f"Server listening on 0.0.0.0:{self.assigned_client_port} for tunnel client")
             print("Waiting for client connections...")
             print("Press Ctrl+C to stop the server")
             

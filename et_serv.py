@@ -14,9 +14,8 @@ from typing import Optional
 
 
 class ETServer:
-    def __init__(self, share_port: int, client_port: int):
+    def __init__(self, share_port: int):
         self.share_port = share_port
-        self.client_port = client_port
         self.server_socket: Optional[socket.socket] = None
         self.running = False
         self.assigned_client_port = None
@@ -121,8 +120,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python et_serv.py --share-port 8080 --client-port 9000
-  python et_serv.py -sp 3000 -cp 5000
+  python et_serv.py --share-port 8080
+  python et_serv.py -sp 3000
         """
     )
     
@@ -133,26 +132,15 @@ Examples:
         help='Port to share (server will listen on this port)'
     )
     
-    parser.add_argument(
-        '--client-port', '-cp',
-        type=int,
-        required=True,
-        help='Base port for client connections'
-    )
-    
     args = parser.parse_args()
     
     # Validate ports
     if args.share_port < 1 or args.share_port > 65535:
         print("Error: share-port must be between 1 and 65535")
         sys.exit(1)
-        
-    if args.client_port < 1 or args.client_port > 65535:
-        print("Error: client-port must be between 1 and 65535")
-        sys.exit(1)
     
     # Create and start server
-    server = ETServer(args.share_port, args.client_port)
+    server = ETServer(args.share_port)
     
     try:
         server.start_server()

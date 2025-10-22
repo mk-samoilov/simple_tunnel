@@ -18,57 +18,28 @@ class CTClient:
         self.serv_port = serv_port
         self.local_port = local_port
         self.running = False
-        self.server_socket: Optional[socket.socket] = None
         
-    def check_port_availability(self, port: int) -> bool:
-        """Check if port is available for binding"""
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_socket:
-                test_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                test_socket.bind(('localhost', port))
-                return True
-        except OSError:
-            return False
-    
     def start_client(self):
         """Start the client and establish connection to server"""
-        if not self.check_port_availability(self.local_port):
-            print(f"Error: Local port {self.local_port} is already in use")
-            sys.exit(1)
-        
         try:
-            # Create server socket for local connections
-            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server_socket.bind(('localhost', self.local_port))
-            self.server_socket.listen(5)
-            
-            print(f"Client started on local port {self.local_port}")
-            print(f"Connecting to server {self.serv_ip}:{self.serv_port}")
-            print("Waiting for local connections...")
+            print(f"Client connecting to server {self.serv_ip}:{self.serv_port}")
+            print(f"Will forward traffic to local port {self.local_port}")
             print("Press Ctrl+C to stop the client")
             
             self.running = True
             
-            while self.running:
-                try:
-                    local_socket, address = self.server_socket.accept()
-                    print(f"Local connection from {address}")
-                    
-                    # Connect to remote server
-                    remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    remote_socket.connect((self.serv_ip, self.serv_port))
-                    print(f"Connected to server {self.serv_ip}:{self.serv_port}")
-                    
-                    # Start bidirectional forwarding
-                    self.forward_traffic(local_socket, remote_socket)
-                    
-                except socket.error as e:
-                    if self.running:
-                        print(f"Socket error: {e}")
-                    break
-                except KeyboardInterrupt:
-                    break
+            # Connect to server
+            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_socket.connect((self.serv_ip, self.serv_port))
+            print(f"Connected to server {self.serv_ip}:{self.serv_port}")
+            
+            # Connect to local application
+            local_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            local_socket.connect(('localhost', self.local_port))
+            print(f"Connected to local application on port {self.local_port}")
+            
+            # Start bidirectional forwarding
+            self.forward_traffic(local_socket, server_socket)
                     
         except KeyboardInterrupt:
             print("\nShutting down client...")
@@ -121,11 +92,6 @@ class CTClient:
     def stop_client(self):
         """Stop the client and cleanup"""
         self.running = False
-        if self.server_socket:
-            try:
-                self.server_socket.close()
-            except:
-                pass
         print("Client stopped")
 
 

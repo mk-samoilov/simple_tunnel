@@ -20,7 +20,7 @@ class CTClient:
         self.running = False
         
     def start_client(self):
-        """Start the client and establish connection to server"""
+        """Start the client and establish persistent connection to server"""
         try:
             print(f"Client connecting to server {self.serv_ip}:{self.serv_port}")
             print(f"Will forward traffic to local port {self.local_port}")
@@ -28,18 +28,28 @@ class CTClient:
             
             self.running = True
             
-            # Connect to server
+            # Connect to server once
             server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server_socket.connect((self.serv_ip, self.serv_port))
             print(f"Connected to server {self.serv_ip}:{self.serv_port}")
             
-            # Connect to local application
-            local_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            local_socket.connect(('localhost', self.local_port))
-            print(f"Connected to local application on port {self.local_port}")
-            
-            # Start bidirectional forwarding
-            self.forward_traffic(local_socket, server_socket)
+            while self.running:
+                try:
+                    # Connect to local application for each user request
+                    local_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    local_socket.connect(('localhost', self.local_port))
+                    print(f"Connected to local application on port {self.local_port}")
+                    
+                    # Start bidirectional forwarding
+                    self.forward_traffic(local_socket, server_socket)
+                    
+                except socket.error as e:
+                    if self.running:
+                        print(f"Local connection error: {e}")
+                        time.sleep(1)  # Wait before retrying
+                    break
+                except KeyboardInterrupt:
+                    break
                     
         except KeyboardInterrupt:
             print("\nShutting down client...")

@@ -25,7 +25,7 @@ class ETServer:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_socket:
                 test_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                test_socket.bind(('localhost', port))
+                test_socket.bind(('0.0.0.0', port))
                 return True
         except OSError:
             return False
@@ -46,33 +46,41 @@ class ETServer:
             sys.exit(1)
         
         try:
-            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server_socket.bind(('localhost', self.share_port))
-            self.server_socket.listen(5)
-            
             # Generate random port for client
             self.assigned_client_port = self.generate_random_port()
             
+            # Create server socket for client connections
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_socket.bind(('0.0.0.0', self.assigned_client_port))
+            self.server_socket.listen(5)
+            
             print(f"Server started on port {self.share_port}")
             print(f"Client should connect to port: {self.assigned_client_port}")
-            print("Waiting for connections...")
+            print("Waiting for client connections...")
             print("Press Ctrl+C to stop the server")
             
             self.running = True
             
+            # Wait for tunnel client connection first
+            tunnel_client_socket, tunnel_client_address = self.server_socket.accept()
+            print(f"Tunnel client connected from {tunnel_client_address}")
+            
+            # Now start listening on share_port for user connections
+            share_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            share_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            share_socket.bind(('0.0.0.0', self.share_port))
+            share_socket.listen(5)
+            
+            print(f"Now accepting user connections on port {self.share_port}")
+            
             while self.running:
                 try:
-                    client_socket, address = self.server_socket.accept()
-                    print(f"Connection established with {address}")
+                    user_socket, user_address = share_socket.accept()
+                    print(f"User connected from {user_address}")
                     
-                    # Handle client connection in separate thread
-                    client_thread = threading.Thread(
-                        target=self.handle_client,
-                        args=(client_socket, address)
-                    )
-                    client_thread.daemon = True
-                    client_thread.start()
+                    # Forward traffic between user and tunnel client
+                    self.forward_traffic(user_socket, tunnel_client_socket)
                     
                 except socket.error as e:
                     if self.running:
@@ -86,22 +94,46 @@ class ETServer:
         finally:
             self.stop_server()
     
-    def handle_client(self, client_socket: socket.socket, address):
-        """Handle individual client connection"""
-        try:
-            # Simple echo server for demonstration
-            # In real implementation, this would handle port forwarding
-            while self.running:
-                data = client_socket.recv(1024)
-                if not data:
-                    break
-                print(f"Received from {address}: {data.decode('utf-8', errors='ignore')}")
-                client_socket.send(data)  # Echo back
-        except Exception as e:
-            print(f"Error handling client {address}: {e}")
-        finally:
-            client_socket.close()
-            print(f"Connection with {address} closed")
+    def forward_traffic(self, user_socket: socket.socket, client_socket: socket.socket):
+        """Forward traffic between user and client"""
+        def forward_data(source: socket.socket, destination: socket.socket, direction: str):
+            try:
+                while self.running:
+                    data = source.recv(4096)
+                    if not data:
+                        break
+                    destination.send(data)
+                    print(f"Forwarded {len(data)} bytes {direction}")
+            except Exception as e:
+                print(f"Error forwarding {direction}: {e}")
+            finally:
+                try:
+                    source.close()
+                    destination.close()
+                except:
+                    pass
+        
+        # Start bidirectional forwarding threads
+        user_to_client = threading.Thread(
+            target=forward_data,
+            args=(user_socket, client_socket, "user->client")
+        )
+        client_to_user = threading.Thread(
+            target=forward_data,
+            args=(client_socket, user_socket, "client->user")
+        )
+        
+        user_to_client.daemon = True
+        client_to_user.daemon = True
+        
+        user_to_client.start()
+        client_to_user.start()
+        
+        # Wait for threads to complete
+        user_to_client.join()
+        client_to_user.join()
+        
+        print("Traffic forwarding stopped")
     
     def stop_server(self):
         """Stop the server and cleanup"""

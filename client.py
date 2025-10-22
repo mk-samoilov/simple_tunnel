@@ -20,22 +20,22 @@ class CTClient:
         self.running = False
         
     def start_client(self):
-        """Start the client and establish persistent connection to server"""
+        """Start the client and connect to server for each user request"""
         try:
-            print(f"Client connecting to server {self.serv_ip}:{self.serv_port}")
+            print(f"Client ready to connect to server {self.serv_ip}:{self.serv_port}")
             print(f"Will forward traffic to local port {self.local_port}")
             print("Press Ctrl+C to stop the client")
             
             self.running = True
             
-            # Connect to server once
-            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server_socket.connect((self.serv_ip, self.serv_port))
-            print(f"Connected to server {self.serv_ip}:{self.serv_port}")
-            
             while self.running:
                 try:
-                    # Connect to local application for each user request
+                    # Connect to server for each user request
+                    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    server_socket.connect((self.serv_ip, self.serv_port))
+                    print(f"Connected to server {self.serv_ip}:{self.serv_port}")
+                    
+                    # Connect to local application
                     local_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     local_socket.connect(('localhost', self.local_port))
                     print(f"Connected to local application on port {self.local_port}")
@@ -45,7 +45,7 @@ class CTClient:
                     
                 except socket.error as e:
                     if self.running:
-                        print(f"Local connection error: {e}")
+                        print(f"Connection error: {e}")
                         time.sleep(1)  # Wait before retrying
                     break
                 except KeyboardInterrupt:

@@ -14,78 +14,81 @@ from typing import Optional, Tuple
 
 
 class TunnelServer:
-    def __init__(self, share_port: int):
-        self.share_port = share_port
-        self.client_port = None
+    def __init__(self, client_port: int):
+        self.client_port = client_port
         self.server_socket = None
         self.running = False
-        
-    def find_free_port(self, start_port: int = 1000, max_port: int = 10000) -> int:
-        """Find a free port in the specified range."""
-        for _ in range(100):  # Try up to 100 times
-            port = random.randint(start_port, max_port)
+
+    def forward_data(self, source: socket.socket, destination: socket.socket, direction: str):
+        """Forward data between two sockets."""
+        try:
+            while True:
+                data = source.recv(4096)
+                if not data:
+                    break
+                destination.send(data)
+                print(f"[DEBUG] Forwarded {len(data)} bytes {direction}")
+        except (ConnectionResetError, ConnectionAbortedError, OSError) as e:
+            print(f"[DEBUG] Connection closed in {direction}: {e}")
+        finally:
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_sock:
-                    test_sock.bind(('0.0.0.0', port))
-                    return port
-            except OSError:
-                continue
-        raise RuntimeError("Could not find a free port in the specified range")
-    
-    def is_port_available(self, port: int) -> bool:
-        """Check if a port is available for binding."""
+                source.close()
+            except:
+                pass
+
+    def handle_client_connection(self, client_socket: socket.socket, client_address: Tuple[str, int]):
+        """Handle connection from tunnel client."""
+        print(f"[INFO] Tunnel client connected from {client_address}")
+
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_sock:
-                test_sock.bind(('0.0.0.0', port))
-                return True
-        except OSError:
-            return False
-    
-    def handle_client(self, client_socket: socket.socket, client_address: Tuple[str, int]):
-        """Handle individual client connection."""
-        print(f"[INFO] Client connected from {client_address}")
-        
-        try:
-            # Connect to the target service on share_port
-            target_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            target_socket.connect(('127.0.0.1', self.share_port))
-            
-            # Create bidirectional forwarding
-            def forward_data(source: socket.socket, destination: socket.socket):
-                try:
-                    while True:
-                        data = source.recv(4096)
-                        if not data:
-                            break
-                        destination.send(data)
-                except (ConnectionResetError, ConnectionAbortedError, OSError):
-                    pass
-                finally:
-                    try:
-                        source.close()
-                        destination.close()
-                    except:
-                        pass
-            
-            # Start forwarding threads
-            client_to_target = threading.Thread(
-                target=forward_data, 
-                args=(client_socket, target_socket),
-                daemon=True
-            )
-            target_to_client = threading.Thread(
-                target=forward_data, 
-                args=(target_socket, client_socket),
-                daemon=True
-            )
-            
-            client_to_target.start()
-            target_to_client.start()
-            
-            # Wait for either thread to finish
-            client_to_target.join()
-            target_to_client.join()
-            
+            # Wait for target connection info from client
+            data = client_socket.recv(1024)
+            if not data:
+                return
+
+            # Parse target info (format: "TARGET_HOST:TARGET_PORT")
+            target_info = data.decode().strip()
+            if ':' not in target_info:
+                print(f"[ERROR] Invalid target info from client: {target_info}")
+                return
+
+            target_host, target_port = target_info.split(':', 1)
+            target_port = int(target_port)
+
+            print(f"[INFO] Client wants to connect to {target_host}:{target_port}")
+
+            # Connect to the target service
+            try:
+                target_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                target_socket.connect((target_host, target_port))
+                print(f"[INFO] Connected to target {target_host}:{target_port}")
+
+                # Send success response to client
+                client_socket.send(b"OK")
+
+                # Create bidirectional forwarding
+                client_to_target = threading.Thread(
+                    target=self.forward_data,
+                    args=(client_socket, target_socket, "client->target"),
+                    daemon=True
+                )
+                target_to_client = threading.Thread(
+                    target=self.forward_data,
+                    args=(target_socket, client_socket, "target->client"),
+                    daemon=True
+                )
+
+                client_to_target.start()
+                target_to_client.start()
+
+                # Wait for threads to complete
+                client_to_target.join()
+                target_to_client.join()
+
+            except Exception as e:
+                print(f"[ERROR] Failed to connect to target {target_host}:{target_port}: {e}")
+                client_socket.send(b"ERROR")
+
         except Exception as e:
             print(f"[ERROR] Error handling client {client_address}: {e}")
         finally:
@@ -93,22 +96,10 @@ class TunnelServer:
                 client_socket.close()
             except:
                 pass
-            print(f"[INFO] Client {client_address} disconnected")
-    
+            print(f"[INFO] Tunnel client {client_address} disconnected")
+
     def start(self):
         """Start the tunnel server."""
-        # Check if share_port is available
-        if not self.is_port_available(self.share_port):
-            print(f"[ERROR] Port {self.share_port} is already in use or not available")
-            return False
-        
-        # Find a free port for client connections
-        try:
-            self.client_port = self.find_free_port()
-        except RuntimeError as e:
-            print(f"[ERROR] {e}")
-            return False
-        
         # Create server socket for client connections
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -118,21 +109,19 @@ class TunnelServer:
         except OSError as e:
             print(f"[ERROR] Failed to bind to port {self.client_port}: {e}")
             return False
-        
+
         self.running = True
         print(f"[INFO] Tunnel server started")
-        print(f"[INFO] Share port: {self.share_port}")
-        print(f"[INFO] Client connection port: {self.client_port}")
-        print(f"[INFO] Server listening on 0.0.0.0:{self.client_port}")
-        print(f"[INFO] Use: client.py --remote-port {self.client_port} --local-port <your_local_port>")
-        
+        print(f"[INFO] Listening for tunnel clients on 0.0.0.0:{self.client_port}")
+        print(f"[INFO] Clients will specify their target applications")
+
         try:
             while self.running:
                 try:
                     client_socket, client_address = self.server_socket.accept()
                     # Handle each client in a separate thread
                     client_thread = threading.Thread(
-                        target=self.handle_client,
+                        target=self.handle_client_connection,
                         args=(client_socket, client_address),
                         daemon=True
                     )
@@ -145,9 +134,9 @@ class TunnelServer:
             print("\n[INFO] Shutting down server...")
         finally:
             self.stop()
-        
+
         return True
-    
+
     def stop(self):
         """Stop the tunnel server."""
         self.running = False
@@ -165,33 +154,33 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --share-port 8080
-  %(prog)s -sp 3000
+  %(prog)s --client-port 5432
+  %(prog)s -cp 5432
 
 The server will:
-1. Check if the specified share-port is available
-2. Start listening for client connections on a random free port
-3. Forward traffic between clients and the service on share-port
+1. Listen on the specified client-port for tunnel client connections
+2. Clients will specify which target application to connect to
+3. Forward traffic between clients and their target applications
         """
     )
-    
+
     parser.add_argument(
-        '--share-port', '-sp',
+        '--client-port', '-cp',
         type=int,
         required=True,
-        help='Port number of the target service to tunnel to (required)'
+        help='Port to listen for tunnel client connections (required)'
     )
-    
+
     args = parser.parse_args()
-    
-    # Validate share port
-    if args.share_port < 1 or args.share_port > 65535:
-        print("[ERROR] Share port must be between 1 and 65535")
+
+    # Validate port
+    if args.client_port < 1 or args.client_port > 65535:
+        print("[ERROR] Client port must be between 1 and 65535")
         sys.exit(1)
-    
+
     # Create and start server
-    server = TunnelServer(args.share_port)
-    
+    server = TunnelServer(args.client_port)
+
     try:
         success = server.start()
         if not success:

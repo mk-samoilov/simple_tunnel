@@ -42,7 +42,7 @@ class ETServer:
     def start_server(self):
         """Start the TCP server on share_port"""
         if not self.check_port_availability(self.share_port):
-            print(f"Error: Port {self.share_port} is already in use")
+            print(f"Error: Port {self.share_port} is already in use")Ъ
             sys.exit(1)
         
         try:
@@ -62,6 +62,10 @@ class ETServer:
             
             self.running = True
             
+            # Wait for tunnel client connection first
+            tunnel_client_socket, tunnel_client_address = self.server_socket.accept()
+            print(f"Tunnel client connected from {tunnel_client_address}")
+            
             # Now start listening on share_port for user connections
             share_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             share_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -74,10 +78,6 @@ class ETServer:
                 try:
                     user_socket, user_address = share_socket.accept()
                     print(f"User connected from {user_address}")
-                    
-                    # Wait for tunnel client connection for this user
-                    tunnel_client_socket, tunnel_client_address = self.server_socket.accept()
-                    print(f"Tunnel client connected from {tunnel_client_address} for user {user_address}")
                     
                     # Forward traffic between user and tunnel client
                     self.forward_traffic(user_socket, tunnel_client_socket)

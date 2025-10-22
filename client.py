@@ -8,17 +8,18 @@ import argparse
 import socket
 import threading
 import sys
-from typing import Optional
+import time
 
 
 class TunnelClient:
-    def __init__(self, remote_ip: str, remote_port: int, local_port: int):
+    def __init__(self, remote_ip: str, remote_port: int, target_host: str, target_port: int):
         self.remote_ip = remote_ip
         self.remote_port = remote_port
-        self.local_port = local_port
+        self.target_host = target_host
+        self.target_port = target_port
         self.running = False
-        
-    def forward_data(self, source: socket.socket, destination: socket.socket):
+
+    def forward_data(self, source: socket.socket, destination: socket.socket, direction: str):
         """Forward data between two sockets."""
         try:
             while True:
@@ -26,92 +27,93 @@ class TunnelClient:
                 if not data:
                     break
                 destination.send(data)
-        except (ConnectionResetError, ConnectionAbortedError, OSError):
-            pass
+                print(f"[DEBUG] Forwarded {len(data)} bytes {direction}")
+        except (ConnectionResetError, ConnectionAbortedError, OSError) as e:
+            print(f"[DEBUG] Connection closed in {direction}: {e}")
         finally:
             try:
                 source.close()
+            except:
+                pass
+            try:
                 destination.close()
             except:
                 pass
-    
-    def handle_local_connection(self, local_socket: socket.socket, local_address):
-        """Handle connection from local application."""
-        print(f"[INFO] Local connection from {local_address}")
-        
+
+    def handle_remote_connection(self, remote_socket: socket.socket):
+        """Handle connection from tunnel server."""
+        print(f"[INFO] Connected to tunnel server, setting up bridge to {self.target_host}:{self.target_port}")
+
         try:
-            # Connect to tunnel server
-            remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            remote_socket.connect((self.remote_ip, self.remote_port))
-            
+            # Connect to target application (Flask)
+            target_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            target_socket.connect((self.target_host, self.target_port))
+            print(f"[INFO] Connected to target {self.target_host}:{self.target_port}")
+
             # Create bidirectional forwarding
-            local_to_remote = threading.Thread(
+            remote_to_target = threading.Thread(
                 target=self.forward_data,
-                args=(local_socket, remote_socket),
+                args=(remote_socket, target_socket, "server->target"),
                 daemon=True
             )
-            remote_to_local = threading.Thread(
+            target_to_remote = threading.Thread(
                 target=self.forward_data,
-                args=(remote_socket, local_socket),
+                args=(target_socket, remote_socket, "target->server"),
                 daemon=True
             )
-            
-            local_to_remote.start()
-            remote_to_local.start()
-            
+
+            remote_to_target.start()
+            target_to_remote.start()
+
             # Wait for either thread to finish
-            local_to_remote.join()
-            remote_to_local.join()
-            
+            remote_to_target.join()
+            target_to_remote.join()
+
         except Exception as e:
-            print(f"[ERROR] Error handling local connection {local_address}: {e}")
+            print(f"[ERROR] Error handling remote connection: {e}")
         finally:
             try:
-                local_socket.close()
+                remote_socket.close()
             except:
                 pass
-            print(f"[INFO] Local connection {local_address} closed")
-    
+            print(f"[INFO] Connection to target closed")
+
     def start(self):
         """Start the tunnel client."""
-        # Create local server socket
-        try:
-            local_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            local_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            local_server.bind(('127.0.0.1', self.local_port))
-            local_server.listen(5)
-        except OSError as e:
-            print(f"[ERROR] Failed to bind to local port {self.local_port}: {e}")
-            return False
-        
         self.running = True
+
         print(f"[INFO] Tunnel client started")
-        print(f"[INFO] Local port: {self.local_port}")
         print(f"[INFO] Remote server: {self.remote_ip}:{self.remote_port}")
-        print(f"[INFO] Client listening on 127.0.0.1:{self.local_port}")
-        
+        print(f"[INFO] Target application: {self.target_host}:{self.target_port}")
+
         try:
             while self.running:
                 try:
-                    local_socket, local_address = local_server.accept()
-                    # Handle each local connection in a separate thread
-                    connection_thread = threading.Thread(
-                        target=self.handle_local_connection,
-                        args=(local_socket, local_address),
-                        daemon=True
-                    )
-                    connection_thread.start()
-                except OSError:
-                    if self.running:
-                        print("[ERROR] Error accepting local connection")
-                    break
+                    # Connect to tunnel server
+                    remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    remote_socket.connect((self.remote_ip, self.remote_port))
+                    print(f"[INFO] Connected to tunnel server {self.remote_ip}:{self.remote_port}")
+
+                    # Handle the connection
+                    self.handle_remote_connection(remote_socket)
+
+                    print(f"[INFO] Disconnected from tunnel server, reconnecting...")
+                    time.sleep(2)  # Wait before reconnecting
+
+                except ConnectionRefusedError:
+                    print(f"[ERROR] Connection refused by server {self.remote_ip}:{self.remote_port}")
+                    time.sleep(5)  # Wait before retrying
+                except Exception as e:
+                    print(f"[ERROR] Error connecting to server: {e}")
+                    time.sleep(5)  # Wait before retrying
+
         except KeyboardInterrupt:
             print("\n[INFO] Shutting down client...")
         finally:
             self.stop()
-        
+
         return True
-    
+
     def stop(self):
         """Stop the tunnel client."""
         self.running = False
@@ -124,51 +126,58 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --remote-ip 192.168.1.100 --remote-port 5432 --local-port 8080
-  %(prog)s -ri 127.0.0.1 -rp 5432 -lp 3000
+  %(prog)s --remote-ip 192.168.1.100 --remote-port 5432 --target-host 127.0.0.1 --target-port 5000
+  %(prog)s -ri 127.0.0.1 -rp 5432 -th 127.0.0.1 -tp 5000
 
 The client will:
-1. Listen on the specified local-port for incoming connections
-2. Forward all traffic to the tunnel server on remote-port
-3. Forward responses back to the local application
+1. Connect to the tunnel server on remote-port
+2. Forward all traffic to the target application on target-port
+3. Forward responses back to the tunnel server
         """
     )
-    
+
     parser.add_argument(
         '--remote-ip', '-ri',
         type=str,
         default='127.0.0.1',
         help='IP address of the tunnel server (default: 127.0.0.1)'
     )
-    
+
     parser.add_argument(
         '--remote-port', '-rp',
         type=int,
         required=True,
         help='Port number of the tunnel server (required)'
     )
-    
+
     parser.add_argument(
-        '--local-port', '-lp',
+        '--target-host', '-th',
+        type=str,
+        default='127.0.0.1',
+        help='Host of the target application (default: 127.0.0.1)'
+    )
+
+    parser.add_argument(
+        '--target-port', '-tp',
         type=int,
         required=True,
-        help='Local port to listen on for incoming connections (required)'
+        help='Port number of the target application (required)'
     )
-    
+
     args = parser.parse_args()
-    
+
     # Validate ports
     if args.remote_port < 1 or args.remote_port > 65535:
         print("[ERROR] Remote port must be between 1 and 65535")
         sys.exit(1)
-    
-    if args.local_port < 1 or args.local_port > 65535:
-        print("[ERROR] Local port must be between 1 and 65535")
+
+    if args.target_port < 1 or args.target_port > 65535:
+        print("[ERROR] Target port must be between 1 and 65535")
         sys.exit(1)
-    
+
     # Create and start client
-    client = TunnelClient(args.remote_ip, args.remote_port, args.local_port)
-    
+    client = TunnelClient(args.remote_ip, args.remote_port, args.target_host, args.target_port)
+
     try:
         success = client.start()
         if not success:

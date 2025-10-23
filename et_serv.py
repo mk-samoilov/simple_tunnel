@@ -163,7 +163,6 @@ class TunnelServer:
                     ext_sock = self.streams.pop(stream_id, None)
                 if ext_sock:
                     ext_sock.close()
-                    print(f"[CLOSE] stream {stream_id}")
             else:
                 print(f"[WARN] unknown cmd {cmd}")
         return buf[offset:]

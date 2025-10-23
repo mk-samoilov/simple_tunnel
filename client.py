@@ -73,11 +73,13 @@ class TunnelClient:
                         pass
             elif cmd == CMD_DATA:
                 if offset + 4 > len(buf):
-                    offset -= 5; break
+                    offset -= 5
+                    break
                 data_len = struct.unpack_from("!I", buf, offset)[0]
                 offset += 4
                 if offset + data_len > len(buf):
-                    offset -= 9; break
+                    offset -= 9
+                    break
                 payload = buf[offset:offset+data_len]
                 offset += data_len
                 s = self.streams.get(stream_id)

@@ -28,12 +28,16 @@ class TunnelClient:
         self.sock = socket.create_connection(self.addr)
         print("[INFO] Connected to server.")
         threading.Thread(target=self._reader, daemon=True).start()
+
         try:
             while True:
                 threading.Event().wait(3600)
+
         except KeyboardInterrupt:
             print("\n[STOP] client exiting")
             self.sock.close()
+
+        print("\n  TUNNEL ACTIVATED\n")
 
     def _reader(self):
         buf = b""

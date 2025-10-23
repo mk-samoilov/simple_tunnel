@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""
-client.py — Reverse tunnel client.
-Connects to server (control port), waits for server requests.
-When server sends OPEN, client connects to local service (--local-port)
-and starts relaying data back and forth.
-"""
 
 import argparse
 import socket
@@ -60,7 +54,6 @@ class TunnelClient:
             stream_id = struct.unpack_from("!I", buf, offset+1)[0]
             offset += 5
             if cmd == CMD_OPEN:
-                print(f"[OPEN] new stream {stream_id}, connecting to localhost:{self.local_port}")
                 try:
                     s = socket.create_connection(("localhost", self.local_port))
                     self.streams[stream_id] = s
@@ -93,9 +86,8 @@ class TunnelClient:
                 s = self.streams.pop(stream_id, None)
                 if s:
                     s.close()
-                    print(f"[CLOSE] stream {stream_id}")
             else:
-                print(f"[WARN] unknown cmd {cmd}")
+                pass
         return buf[offset:]
 
     def _forward_local_to_server(self, stream_id, local_sock):
@@ -113,8 +105,8 @@ class TunnelClient:
                 self.sock.sendall(struct.pack("!BI", CMD_CLOSE, stream_id))
             except:
                 pass
+
             local_sock.close()
-            print(f"[END] local→server stream {stream_id} closed")
 
 if __name__ == "__main__":
     args = parse_args()

@@ -9,6 +9,7 @@ import argparse
 import socket
 import threading
 import struct
+import time
 import random
 
 CMD_OPEN = 1
@@ -81,7 +82,6 @@ class TunnelServer:
                 if self.client_conn:
                     ctrl = self.client_conn
                     break
-            import time
             time.sleep(0.1)
         
         stream_id = id(ext_sock) & 0xFFFFFFFF
